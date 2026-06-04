@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Backtesting from "./Backtesting";
 import PaperTrading from "./PaperTrading";
+import Login from "./Login";
 
 const PROXY = "https://daytrade-proxy.onrender.com";
 
@@ -17,11 +18,11 @@ const ASSETS = [
 ];
 
 const INTERVALS = [
-  { value: "1m",  label: "1m",   range: "1d" },
-  { value: "5m",  label: "5m",   range: "5d" },
-  { value: "15m", label: "15m",  range: "5d" },
-  { value: "1h",  label: "1h",   range: "1mo" },
-  { value: "1d",  label: "1D",   range: "3mo" },
+  { value: "1m", label: "1m", range: "1d" },
+  { value: "5m", label: "5m", range: "5d" },
+  { value: "15m", label: "15m", range: "5d" },
+  { value: "1h", label: "1h", range: "1mo" },
+  { value: "1d", label: "1D", range: "3mo" },
 ];
 
 function useIsMobile() {
@@ -32,6 +33,17 @@ function useIsMobile() {
     return () => window.removeEventListener("resize", handle);
   }, []);
   return isMobile;
+}
+
+// Verifica sessão salva
+function checkSession() {
+  try {
+    const stored = sessionStorage.getItem("tradeai_auth");
+    if (!stored) return false;
+    const { expiry } = JSON.parse(stored);
+    if (Date.now() > expiry) { sessionStorage.removeItem("tradeai_auth"); return false; }
+    return true;
+  } catch { return false; }
 }
 
 function CandleChart({ candles, width = 600, height = 180 }) {
@@ -148,6 +160,7 @@ function Dashboard() {
     fetchCandles(asset, interval);
   }, [asset, interval, fetchCandles]);
 
+  // IA via proxy (Nível 2 - chave segura no servidor)
   const analyzeWithAI = useCallback(async () => {
     const cands = candlesRef.current;
     const price = priceRef.current;
@@ -158,21 +171,21 @@ function Dashboard() {
       const bullCandles = last20.filter(c => c.close > c.open).length;
       const trend = bullCandles >= 12 ? "ALTA" : bullCandles <= 8 ? "BAIXA" : "LATERAL";
       const lastC = cands[cands.length - 1];
-      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+
+      const response = await fetch(`${PROXY}/api/ai/analyze`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.REACT_APP_GROQ_KEY}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "llama-3.3-70b-versatile", max_tokens: 300, temperature: 0.2,
-          messages: [
-            { role: "system", content: "Trader B3. Responda APENAS JSON válido." },
-            { role: "user", content: `Ativo: ${asset} | Preço: R$${price.toFixed(2)} | Tendência: ${trend} | RSI estimado: ${bullCandles * 5} | Último candle: A${lastC.open.toFixed(2)} F${lastC.close.toFixed(2)} | SL: ${stopLoss}% | TP: ${takeProfit}%\nResponda: {"signal":"COMPRA|VENDA|AGUARDAR","confidence":0-100,"bestInterval":"1m|5m|15m|1h|1d","intervalReason":"motivo","reasoning":"análise","entry":${price},"sl":${(price*(1-parseFloat(stopLoss)/100)).toFixed(2)},"tp":${(price*(1+parseFloat(takeProfit)/100)).toFixed(2)}}` }
-          ],
+          systemPrompt: "Trader quantitativo B3. Responda APENAS JSON válido, sem texto extra.",
+          prompt: `Ativo: ${asset} | Preço: R$${price.toFixed(2)} | Tendência: ${trend} (${bullCandles}/20) | Último: A${lastC.open.toFixed(2)} F${lastC.close.toFixed(2)} | SL: ${stopLoss}% | TP: ${takeProfit}%\nResponda: {"signal":"COMPRA|VENDA|AGUARDAR","confidence":0-100,"bestInterval":"1m|5m|15m|1h|1d","intervalReason":"motivo","reasoning":"análise 2 frases","entry":${price},"sl":${(price*(1-parseFloat(stopLoss)/100)).toFixed(2)},"tp":${(price*(1+parseFloat(takeProfit)/100)).toFixed(2)}}`
         }),
       });
+
       const data = await response.json();
-      const text = data.choices?.[0]?.message?.content || "";
-      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+      if (!data.success) throw new Error(data.error || "Erro na IA");
+      const parsed = data.data;
       const time = new Date().toLocaleTimeString("pt-BR");
+
       setLogs(prev => [{ id: Date.now(), time, asset, signal: parsed.signal, price, confidence: parsed.confidence, bestInterval: parsed.bestInterval, reasoning: `[${parsed.confidence}% | ${parsed.bestInterval}] ${parsed.reasoning}`, entry: parsed.entry || price, sl: parsed.sl, tp: parsed.tp }, ...prev].slice(0, 20));
       setStats(prev => ({ ops: prev.ops + 1, wins: prev.wins + (parsed.signal !== "AGUARDAR" && parsed.confidence > 65 ? 1 : 0), pnl: prev.pnl + (parsed.signal === "COMPRA" ? (Math.random() * 2 - 0.4) : 0) }));
       if (parsed.bestInterval && parsed.bestInterval !== interval) setInterval(parsed.bestInterval);
@@ -193,8 +206,6 @@ function Dashboard() {
 
   return (
     <div style={{ padding: isMobile ? "12px" : "20px", maxWidth: "1200px", margin: "0 auto" }}>
-
-      {/* Stats - 2 colunas no mobile, 4 no desktop */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)", gap: "10px", marginBottom: "14px" }}>
         {[
           { label: "PREÇO", value: currentPrice ? `R$ ${currentPrice.toFixed(2)}` : "...", sub: priceChange !== null ? `${priceChange >= 0 ? "+" : ""}${priceChange.toFixed(2)}%` : "", color: priceColor },
@@ -210,15 +221,10 @@ function Dashboard() {
         ))}
       </div>
 
-      {/* Layout principal - 1 coluna no mobile, 2 no desktop */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "300px 1fr", gap: "14px" }}>
-
-        {/* Painel de configuração */}
         <div>
           <div style={{ background: "#0d1320", border: "1px solid #1e2d45", borderRadius: "12px", padding: "16px", marginBottom: "12px" }}>
             <div style={{ color: "#444", fontSize: "9px", fontFamily: "monospace", letterSpacing: "0.1em", marginBottom: "12px" }}>CONFIGURAÇÃO</div>
-
-            {/* Seletor de ativo */}
             <div style={{ marginBottom: "10px" }}>
               <label style={{ display: "block", color: "#666", fontSize: "11px", marginBottom: "4px" }}>Ativo</label>
               <select value={asset} onChange={e => setAsset(e.target.value)} disabled={running}
@@ -226,8 +232,6 @@ function Dashboard() {
                 {ASSETS.map(a => <option key={a} value={a}>{a} {allPrices[a] ? `· R$${allPrices[a].price?.toFixed(2)}` : ""}</option>)}
               </select>
             </div>
-
-            {/* Timeframe */}
             <div style={{ marginBottom: "10px" }}>
               <label style={{ display: "block", color: "#666", fontSize: "11px", marginBottom: "4px" }}>Timeframe</label>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: "4px" }}>
@@ -239,8 +243,6 @@ function Dashboard() {
                 ))}
               </div>
             </div>
-
-            {/* SL e TP */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "12px" }}>
               {[{ label: "Stop Loss %", val: stopLoss, set: setStopLoss }, { label: "Take Profit %", val: takeProfit, set: setTakeProfit }].map((f, i) => (
                 <div key={i}>
@@ -250,19 +252,16 @@ function Dashboard() {
                 </div>
               ))}
             </div>
-
             <button onClick={() => setRunning(r => !r)}
               style={{ width: "100%", marginBottom: "8px", background: running ? "#ff4d6d22" : "linear-gradient(135deg,#00e5a0,#00b07a)", color: running ? "#ff4d6d" : "#000", border: running ? "1px solid #ff4d6d55" : "none", borderRadius: "10px", padding: "13px", fontSize: "15px", fontWeight: "700", cursor: "pointer" }}>
               {running ? "⏹ PARAR IA" : "▶ INICIAR IA"}
             </button>
-
             <button onClick={() => fetchCandles(asset, interval)}
               style={{ width: "100%", background: "#111a27", border: "1px solid #1e2d45", color: "#888", borderRadius: "8px", padding: "9px", fontSize: "12px", cursor: "pointer" }}>
               🔄 Atualizar dados
             </button>
           </div>
 
-          {/* Último sinal */}
           {logs[0] && (
             <div style={{ background: "#0d1320", border: `1px solid ${logs[0].signal === "COMPRA" ? "#00e5a044" : logs[0].signal === "VENDA" ? "#ff4d6d44" : "#ffd60a44"}`, borderRadius: "12px", padding: "14px", marginBottom: "12px" }}>
               <div style={{ color: "#444", fontSize: "9px", fontFamily: "monospace", letterSpacing: "0.1em", marginBottom: "8px" }}>ÚLTIMO SINAL</div>
@@ -271,12 +270,10 @@ function Dashboard() {
             </div>
           )}
 
-          {/* Preços - colapsável no mobile */}
           <div style={{ background: "#0d1320", border: "1px solid #1e2d45", borderRadius: "12px", padding: "14px" }}>
             <button onClick={() => setShowPrices(p => !p)}
-              style={{ width: "100%", background: "none", border: "none", color: "#444", fontSize: "10px", fontFamily: "monospace", letterSpacing: "0.1em", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", padding: 0 }}>
-              <span>MERCADO AO VIVO ⚡</span>
-              <span>{showPrices ? "▲" : "▼"}</span>
+              style={{ width: "100%", background: "none", border: "none", color: "#444", fontSize: "10px", fontFamily: "monospace", letterSpacing: "0.1em", cursor: "pointer", display: "flex", justifyContent: "space-between", padding: 0 }}>
+              <span>MERCADO AO VIVO ⚡</span><span>{showPrices ? "▲" : "▼"}</span>
             </button>
             {(showPrices || !isMobile) && (
               <div style={{ marginTop: "10px" }}>
@@ -297,9 +294,7 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Painel direito */}
         <div>
-          {/* Gráfico */}
           <div style={{ background: "#0d1320", border: "1px solid #1e2d45", borderRadius: "12px", padding: "16px", marginBottom: "12px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
               <div>
@@ -315,36 +310,31 @@ function Dashboard() {
             <CandleChart candles={candles} width={isMobile ? 340 : 700} height={isMobile ? 140 : 180} />
           </div>
 
-          {/* Log */}
           <div style={{ background: "#0d1320", border: "1px solid #1e2d45", borderRadius: "12px", padding: "16px", maxHeight: isMobile ? "280px" : "380px", overflowY: "auto" }}>
-            <div style={{ color: "#444", fontSize: "9px", fontFamily: "monospace", letterSpacing: "0.1em", marginBottom: "12px" }}>
-              LOG DE ANÁLISES {logs.length > 0 && `(${logs.length})`}
-            </div>
+            <div style={{ color: "#444", fontSize: "9px", fontFamily: "monospace", letterSpacing: "0.1em", marginBottom: "12px" }}>LOG DE ANÁLISES {logs.length > 0 && `(${logs.length})`}</div>
             {logs.length === 0 ? (
-              <div style={{ color: "#2a2a2a", fontSize: "13px", textAlign: "center", padding: "30px 0" }}>
-                {running ? "Aguardando análise..." : "Inicie a IA para ver os sinais"}
-              </div>
+              <div style={{ color: "#2a2a2a", fontSize: "13px", textAlign: "center", padding: "30px 0" }}>{running ? "Aguardando análise..." : "Inicie a IA para ver os sinais"}</div>
             ) : logs.map(l => <LogEntry key={l.id} entry={l} />)}
           </div>
         </div>
       </div>
 
       <div style={{ marginTop: "12px", padding: "10px 14px", background: "#0d1320", border: "1px solid #ff4d6d22", borderRadius: "10px" }}>
-        <span style={{ color: "#555", fontSize: "11px" }}>
-          <strong style={{ color: "#ff4d6d" }}>⚠️</strong> Sistema educacional. Dados reais via Brapi ⚡ + Yahoo Finance.
-        </span>
+        <span style={{ color: "#555", fontSize: "11px" }}>⚠️ Sistema educacional. Dados reais via Brapi ⚡ + Yahoo Finance.</span>
       </div>
     </div>
   );
 }
 
 export default function App() {
+  const [autenticado, setAutenticado] = useState(checkSession);
   const [page, setPage] = useState("dashboard");
   const [proxyOk, setProxyOk] = useState(null);
   const [proxyWaking, setProxyWaking] = useState(false);
   const isMobile = useIsMobile();
 
   useEffect(() => {
+    if (!autenticado) return;
     keepProxyAwake();
     const check = () => {
       fetch(`${PROXY}/health`)
@@ -355,7 +345,14 @@ export default function App() {
     check();
     const i = setInterval(check, 15000);
     return () => clearInterval(i);
-  }, []);
+  }, [autenticado]);
+
+  const handleLogout = () => {
+    sessionStorage.removeItem("tradeai_auth");
+    setAutenticado(false);
+  };
+
+  if (!autenticado) return <Login onLogin={() => setAutenticado(true)} />;
 
   const PAGES = [
     { id: "dashboard",    label: isMobile ? "📈" : "📈 Dashboard" },
@@ -373,7 +370,6 @@ export default function App() {
         .pulse { animation: pulse 2s infinite; } @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
       `}</style>
 
-      {/* Header */}
       <div style={{ background: "#0a0f1a", borderBottom: "1px solid #1e2d45", padding: isMobile ? "10px 14px" : "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <div style={{ width: "28px", height: "28px", background: "linear-gradient(135deg,#00e5a0,#006eff)", borderRadius: "7px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px" }}>⚡</div>
@@ -385,7 +381,6 @@ export default function App() {
           )}
         </div>
 
-        {/* Navegação */}
         <div style={{ display: "flex", gap: "3px", background: "#0d1320", border: "1px solid #1e2d45", borderRadius: "10px", padding: "3px" }}>
           {PAGES.map(nav => (
             <button key={nav.id} onClick={() => setPage(nav.id)}
@@ -395,18 +390,22 @@ export default function App() {
           ))}
         </div>
 
-        {/* Status proxy */}
-        <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-          <div style={{ width: "7px", height: "7px", borderRadius: "50%", background: proxyOk === null ? "#555" : proxyOk ? "#00e5a0" : "#ffd60a" }} className={proxyWaking ? "pulse" : ""} />
-          {!isMobile && (
-            <span style={{ color: proxyOk ? "#00e5a0" : "#ffd60a", fontSize: "10px", fontFamily: "monospace" }}>
-              {proxyOk === null ? "..." : proxyOk ? "PROXY OK" : "ACORDANDO..."}
-            </span>
-          )}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+            <div style={{ width: "7px", height: "7px", borderRadius: "50%", background: proxyOk === null ? "#555" : proxyOk ? "#00e5a0" : "#ffd60a" }} className={proxyWaking ? "pulse" : ""} />
+            {!isMobile && (
+              <span style={{ color: proxyOk ? "#00e5a0" : "#ffd60a", fontSize: "10px", fontFamily: "monospace" }}>
+                {proxyOk === null ? "..." : proxyOk ? "PROXY OK" : "ACORDANDO..."}
+              </span>
+            )}
+          </div>
+          <button onClick={handleLogout}
+            style={{ background: "#ff4d6d15", border: "1px solid #ff4d6d33", color: "#ff4d6d", borderRadius: "6px", padding: "5px 10px", fontSize: "11px", cursor: "pointer", fontFamily: "inherit" }}>
+            🔒 {isMobile ? "" : "Sair"}
+          </button>
         </div>
       </div>
 
-      {/* Banner proxy acordando */}
       {proxyWaking && (
         <div style={{ background: "#ffd60a11", border: "1px solid #ffd60a33", margin: "10px 14px", borderRadius: "10px", padding: "10px 14px", display: "flex", alignItems: "center", gap: "8px" }}>
           <span className="pulse">⏳</span>
