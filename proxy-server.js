@@ -203,20 +203,20 @@ app.get("/api/conta", async (req, res) => {
     const r = await db.query(`SELECT * FROM contas WHERE usuario_id=$1 LIMIT 1`, [db.USUARIO_FIXO_ID]);
     if (!r.rows.length) return res.json({ success: true, data: null });
     const row = r.rows[0];
-    return res.json({ success: true, data: { saldoConta: parseFloat(row.saldo_conta), valorInvestido: parseFloat(row.valor_investido), lancamentosFuturos: parseFloat(row.lancamentos_futuros), corretora: row.corretora, conectado: row.conectado, atualizadoEm: row.atualizado_em } });
+    return res.json({ success: true, data: { saldoConta: parseFloat(row.saldo_conta), valorInvestido: parseFloat(row.valor_investido), lancamentosFuturos: parseFloat(row.lancamentos_futuros), corretora: row.corretora, conectado: row.conectado, valorRendaFixa: parseFloat(row.valor_renda_fixa||0), valorRendaVariavel: parseFloat(row.valor_renda_variavel||0), atualizadoEm: row.atualizado_em } });
   } catch (err) { return res.status(500).json({ error: "Erro ao buscar conta.", details: err.message }); }
 });
 
 app.post("/api/conta", async (req, res) => {
-  const { saldoConta, valorInvestido, lancamentosFuturos, corretora, conectado } = req.body;
+  const { saldoConta, valorInvestido, lancamentosFuturos, corretora, conectado, valorRendaFixa, valorRendaVariavel } = req.body;
   try {
     const ex = await db.query(`SELECT id FROM contas WHERE usuario_id=$1 LIMIT 1`, [db.USUARIO_FIXO_ID]);
     if (ex.rows.length) {
-      await db.query(`UPDATE contas SET saldo_conta=$1,valor_investido=$2,lancamentos_futuros=$3,corretora=$4,conectado=$5,atualizado_em=now() WHERE id=$6`,
-        [saldoConta||0, valorInvestido||0, lancamentosFuturos||0, corretora||null, conectado||false, ex.rows[0].id]);
+      await db.query(`UPDATE contas SET saldo_conta=$1,valor_investido=$2,lancamentos_futuros=$3,corretora=$4,conectado=$5,valor_renda_fixa=$6,valor_renda_variavel=$7,atualizado_em=now() WHERE id=$8`,
+        [saldoConta||0, valorInvestido||0, lancamentosFuturos||0, corretora||null, conectado||false, valorRendaFixa||0, valorRendaVariavel||0, ex.rows[0].id]);
     } else {
-      await db.query(`INSERT INTO contas(usuario_id,saldo_conta,valor_investido,lancamentos_futuros,corretora,conectado) VALUES($1,$2,$3,$4,$5,$6)`,
-        [db.USUARIO_FIXO_ID, saldoConta||0, valorInvestido||0, lancamentosFuturos||0, corretora||null, conectado||false]);
+      await db.query(`INSERT INTO contas(usuario_id,saldo_conta,valor_investido,lancamentos_futuros,corretora,conectado,valor_renda_fixa,valor_renda_variavel) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [db.USUARIO_FIXO_ID, saldoConta||0, valorInvestido||0, lancamentosFuturos||0, corretora||null, conectado||false, valorRendaFixa||0, valorRendaVariavel||0]);
     }
     return res.json({ success: true });
   } catch (err) { return res.status(500).json({ error: "Erro ao salvar conta.", details: err.message }); }
@@ -261,6 +261,31 @@ app.delete("/api/alertas/:id", async (req, res) => {
     await db.query(`DELETE FROM alertas WHERE id=$1 AND usuario_id=$2`, [req.params.id, db.USUARIO_FIXO_ID]);
     return res.json({ success: true });
   } catch (err) { return res.status(500).json({ error: "Erro ao remover alerta.", details: err.message }); }
+});
+
+// ── Histórico de recomendações ──────────────────────────────────
+app.get("/api/historico", async (req, res) => {
+  try {
+    const r = await db.query(`SELECT * FROM historico_recomendacoes WHERE usuario_id=$1 ORDER BY criado_em DESC LIMIT 100`, [db.USUARIO_FIXO_ID]);
+    return res.json({ success: true, data: r.rows.map(row => ({
+      id: row.id, ativo: row.ativo, origem: row.origem, horizonte: row.horizonte,
+      recomendacao: row.recomendacao, score: row.score ? parseFloat(row.score) : null,
+      precoNoMomento: row.preco_no_momento ? parseFloat(row.preco_no_momento) : null,
+      analise: row.analise, criadoEm: row.criado_em,
+    })) });
+  } catch (err) { return res.status(500).json({ error: "Erro ao buscar histórico.", details: err.message }); }
+});
+
+app.post("/api/historico", async (req, res) => {
+  const { ativo, origem, horizonte, recomendacao, score, precoNoMomento, analise } = req.body;
+  if (!ativo || !origem) return res.status(400).json({ error: "Campos obrigatórios: ativo, origem." });
+  try {
+    const r = await db.query(
+      `INSERT INTO historico_recomendacoes(usuario_id,ativo,origem,horizonte,recomendacao,score,preco_no_momento,analise) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [db.USUARIO_FIXO_ID, ativo, origem, horizonte||null, recomendacao||null, score||null, precoNoMomento||null, analise||null]
+    );
+    return res.json({ success: true, id: r.rows[0].id });
+  } catch (err) { return res.status(500).json({ error: "Erro ao salvar histórico.", details: err.message }); }
 });
 
 // ── Health ───────────────────────────────────────────────────
