@@ -19,7 +19,7 @@ pool.on("error", (err) => {
 
 // ID fixo do único usuário do app (você). Quando o app tiver
 // múltiplos usuários de verdade, isso vira dinâmico via auth.
-const USUARIO_FIXO_ID = "00000000-0000-0000-0000-000000000001";
+const USUARIO_FIXO_ID = "96002ee8-bcdf-4853-b59a-01e602c7792e";;
 
 /**
  * Executa uma query no banco com tratamento de erro padronizado.
