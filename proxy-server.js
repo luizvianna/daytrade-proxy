@@ -263,6 +263,52 @@ app.delete("/api/alertas/:id", async (req, res) => {
   } catch (err) { return res.status(500).json({ error: "Erro ao remover alerta.", details: err.message }); }
 });
 
+// ── Ordens (compra/venda) ───────────────────────────────────
+app.post("/api/ordens", async (req, res) => {
+  try {
+    const { ativo, tipo, quantidade, precoTipo, precoLimite } = req.body;
+
+    if (!ativo || !tipo || !quantidade || !precoTipo) {
+      return res.status(400).json({ error: "Campos obrigatórios: ativo, tipo, quantidade, precoTipo" });
+    }
+    if (!["compra", "venda"].includes(tipo)) {
+      return res.status(400).json({ error: "tipo deve ser 'compra' ou 'venda'" });
+    }
+    if (!["mercado", "limite"].includes(precoTipo)) {
+      return res.status(400).json({ error: "precoTipo deve ser 'mercado' ou 'limite'" });
+    }
+    if (precoTipo === "limite" && !precoLimite) {
+      return res.status(400).json({ error: "precoLimite é obrigatório quando precoTipo é 'limite'" });
+    }
+
+    const r = await db.query(
+      `INSERT INTO ordens(usuario_id, ativo, tipo, quantidade, preco_tipo, preco_limite, status)
+       VALUES($1,$2,$3,$4,$5,$6,'pendente') RETURNING *`,
+      [db.USUARIO_FIXO_ID, ativo, tipo, quantidade, precoTipo, precoLimite || null]
+    );
+
+    return res.json({ success: true, ordem: r.rows[0] });
+  } catch (err) { return res.status(500).json({ error: "Erro ao criar ordem.", details: err.message }); }
+});
+
+app.get("/api/ordens", async (req, res) => {
+  try {
+    const r = await db.query(`SELECT * FROM ordens WHERE usuario_id=$1 ORDER BY criado_em DESC LIMIT 100`, [db.USUARIO_FIXO_ID]);
+    return res.json({ success: true, data: r.rows });
+  } catch (err) { return res.status(500).json({ error: "Erro ao buscar ordens.", details: err.message }); }
+});
+
+app.delete("/api/ordens/:id", async (req, res) => {
+  try {
+    const r = await db.query(
+      `UPDATE ordens SET status='cancelada', atualizado_em=now() WHERE id=$1 AND usuario_id=$2 AND status='pendente' RETURNING *`,
+      [req.params.id, db.USUARIO_FIXO_ID]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: "Ordem não encontrada ou já não está mais pendente." });
+    return res.json({ success: true, ordem: r.rows[0] });
+  } catch (err) { return res.status(500).json({ error: "Erro ao cancelar ordem.", details: err.message }); }
+});
+
 // ── Histórico de recomendações ──────────────────────────────────
 app.get("/api/historico", async (req, res) => {
   try {
