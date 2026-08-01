@@ -17,5 +17,11 @@
   "bugs": {
     "url": "https://github.com/luizvianna/daytrade-proxy/issues"
   },
-  "homepage": "https://github.com/luizvianna/daytrade-proxy#readme"
+  "homepage": "https://github.com/luizvianna/daytrade-proxy#readme",
+  "dependencies": {
+    "axios": "^1.19.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "pg": "^8.22.0"
+  }
 }
