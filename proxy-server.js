@@ -14,7 +14,8 @@ const SUPABASE_URL = process.env.SUPABASE_URL || "https://tbgoxrhoosxcrqqhtpbh.s
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
 const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Middleware: exige um token válido e coloca o usuario_id real em req.usuarioId
+// Middleware: exige um token válido, garante que existe linha em `usuarios`,
+// e coloca o usuario_id real em req.usuarioId
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
@@ -23,6 +24,14 @@ async function requireAuth(req, res, next) {
     const { data, error } = await supabaseAuth.auth.getUser(token);
     if (error || !data?.user) return res.status(401).json({ error: "Token inválido ou expirado." });
     req.usuarioId = data.user.id;
+
+    // Garante que existe uma linha em `usuarios` pra esse id (necessário
+    // pra foreign keys de outras tabelas e pro is_admin funcionarem)
+    await db.query(
+      `INSERT INTO usuarios(id, email) VALUES($1,$2) ON CONFLICT (id) DO NOTHING`,
+      [data.user.id, data.user.email || null]
+    );
+
     next();
   } catch (e) {
     return res.status(401).json({ error: "Erro ao validar autenticação." });
