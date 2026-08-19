@@ -201,6 +201,53 @@ app.get("/api/candles", async (req, res) => {
 // e usam req.usuarioId (o usuário real logado) em vez de um ID fixo
 // ============================================================
 
+// ── Streak de acesso ─────────────────────────────────────────
+// Atualiza no máximo 1x por dia (fuso America/Sao_Paulo) a sequência de
+// dias seguidos que o usuário abriu o app. O cálculo do "dia" é feito
+// inteiramente no SQL, ancorado no fuso de Brasília — evita o bug clássico
+// de contar o dia errado perto da meia-noite se o cálculo fosse feito em
+// UTC (que é como o Node por padrão trabalha com datas).
+app.get("/api/streak", requireAuth, async (req, res) => {
+  try {
+    const r = await db.query(
+      `UPDATE usuarios
+       SET dias_seguidos = CASE
+             WHEN ultimo_acesso = (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN dias_seguidos
+             WHEN ultimo_acesso = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 1 THEN dias_seguidos + 1
+             ELSE 1
+           END,
+           ultimo_acesso = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+       WHERE id=$1
+       RETURNING dias_seguidos, ultimo_acesso`,
+      [req.usuarioId]
+    );
+    if (!r.rows.length) return res.json({ success: true, data: { diasSeguidos: 0, ultimoAcesso: null } });
+    return res.json({ success: true, data: { diasSeguidos: r.rows[0].dias_seguidos, ultimoAcesso: r.rows[0].ultimo_acesso } });
+  } catch (err) { return res.status(500).json({ error: "Erro ao atualizar streak.", details: err.message }); }
+});
+
+// ── Preferências da Home (personalização) ────────────────────
+app.get("/api/preferencias-home", requireAuth, async (req, res) => {
+  try {
+    const r = await db.query(`SELECT preferencias_home FROM usuarios WHERE id=$1`, [req.usuarioId]);
+    const prefs = r.rows[0]?.preferencias_home || { mostrarGrafico: true, mostrarAlocacao: true, mostrarTaxas: true };
+    return res.json({ success: true, data: prefs });
+  } catch (err) { return res.status(500).json({ error: "Erro ao buscar preferências.", details: err.message }); }
+});
+
+app.post("/api/preferencias-home", requireAuth, async (req, res) => {
+  const { mostrarGrafico, mostrarAlocacao, mostrarTaxas } = req.body;
+  try {
+    const prefs = {
+      mostrarGrafico: mostrarGrafico !== false,
+      mostrarAlocacao: mostrarAlocacao !== false,
+      mostrarTaxas: mostrarTaxas !== false,
+    };
+    await db.query(`UPDATE usuarios SET preferencias_home=$1 WHERE id=$2`, [JSON.stringify(prefs), req.usuarioId]);
+    return res.json({ success: true, data: prefs });
+  } catch (err) { return res.status(500).json({ error: "Erro ao salvar preferências.", details: err.message }); }
+});
+
 // ── Perfil ───────────────────────────────────────────────────
 app.get("/api/perfil", requireAuth, async (req, res) => {
   try {
