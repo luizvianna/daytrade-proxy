@@ -248,6 +248,33 @@ app.post("/api/preferencias-home", requireAuth, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: "Erro ao salvar preferências.", details: err.message }); }
 });
 
+// ── Watchlist (ativos favoritos) ──────────────────────────────
+app.get("/api/watchlist", requireAuth, async (req, res) => {
+  try {
+    const r = await db.query(`SELECT ticker FROM watchlist WHERE usuario_id=$1 ORDER BY criado_em DESC`, [req.usuarioId]);
+    return res.json({ success: true, data: r.rows.map(row => row.ticker) });
+  } catch (err) { return res.status(500).json({ error: "Erro ao buscar watchlist.", details: err.message }); }
+});
+
+app.post("/api/watchlist", requireAuth, async (req, res) => {
+  const { ticker } = req.body;
+  if (!ticker) return res.status(400).json({ error: "Campo obrigatório: ticker." });
+  try {
+    await db.query(
+      `INSERT INTO watchlist(usuario_id, ticker) VALUES($1,$2) ON CONFLICT (usuario_id, ticker) DO NOTHING`,
+      [req.usuarioId, ticker]
+    );
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ error: "Erro ao adicionar à watchlist.", details: err.message }); }
+});
+
+app.delete("/api/watchlist/:ticker", requireAuth, async (req, res) => {
+  try {
+    await db.query(`DELETE FROM watchlist WHERE usuario_id=$1 AND ticker=$2`, [req.usuarioId, req.params.ticker]);
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ error: "Erro ao remover da watchlist.", details: err.message }); }
+});
+
 // ── Perfil ───────────────────────────────────────────────────
 app.get("/api/perfil", requireAuth, async (req, res) => {
   try {
