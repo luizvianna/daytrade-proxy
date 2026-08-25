@@ -18,6 +18,9 @@ const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // e coloca o usuario_id real em req.usuarioId
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
+  // LOG TEMPORÁRIO DE DIAGNÓSTICO — remover depois de resolver o 401 misterioso.
+  // Não loga o token inteiro por segurança, só se ele chegou e o tamanho.
+  console.log(`[DEBUG requireAuth] ${req.method} ${req.path} | header authorization: ${authHeader ? `presente, ${authHeader.length} chars, comeca com "${authHeader.slice(0, 15)}..."` : "AUSENTE"} | todos os headers recebidos: ${Object.keys(req.headers).join(", ")}`);
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ error: "Token de autenticação ausente." });
   try {
@@ -154,7 +157,7 @@ app.get("/api/prices", async (req, res) => {
       try {
         const r = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${formatTicker(ticker)}`, { params: { interval:"1m", range:"1d" }, headers: { "User-Agent":"Mozilla/5.0" }, timeout: 8000 });
         const m = r.data.chart.result[0].meta;
-        results[ticker] = { price: parseFloat((m.regularMarketPrice||0).toFixed(2)), previousClose: parseFloat((m.chartPreviousClose||0).toFixed(2)), change: parseFloat(((m.regularMarketPrice-m.chartPreviousClose)/m.chartPreviousClose*100).toFixed(2)), realtime: false }; 
+        results[ticker] = { price: parseFloat((m.regularMarketPrice||0).toFixed(2)), previousClose: parseFloat((m.chartPreviousClose||0).toFixed(2)), change: parseFloat(((m.regularMarketPrice-m.chartPreviousClose)/m.chartPreviousClose*100).toFixed(2)), realtime: false };
       } catch { results[ticker] = { price:0, previousClose:0, change:0, error:true }; }
     }));
   }
@@ -202,11 +205,6 @@ app.get("/api/candles", async (req, res) => {
 // ============================================================
 
 // ── Streak de acesso ─────────────────────────────────────────
-// Atualiza no máximo 1x por dia (fuso America/Sao_Paulo) a sequência de
-// dias seguidos que o usuário abriu o app. O cálculo do "dia" é feito
-// inteiramente no SQL, ancorado no fuso de Brasília — evita o bug clássico
-// de contar o dia errado perto da meia-noite se o cálculo fosse feito em
-// UTC (que é como o Node por padrão trabalha com datas).
 app.get("/api/streak", requireAuth, async (req, res) => {
   try {
     const r = await db.query(
