@@ -75,7 +75,7 @@ app.post("/api/ai/analyze", async (req, res) => {
   if (!prompt) return res.status(400).json({ error: "Prompt obrigatório." });
   try {
     const r = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
-      model: "llama-3.3-70b-versatile", max_tokens: 800, temperature: 0.2,
+      model: "openai/gpt-oss-120b", max_tokens: 800, temperature: 0.2,
       messages: [
         { role: "system", content: systemPrompt || "Trader quantitativo B3. Responda APENAS JSON válido." },
         { role: "user", content: prompt }
@@ -129,7 +129,7 @@ app.post("/api/ai/chat", async (req, res) => {
 
   try {
     const r = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
-      model: "llama-3.3-70b-versatile", max_tokens: 1500, temperature: 0.3,
+      model: "openai/gpt-oss-120b", max_tokens: 1500, temperature: 0.3,
       messages: [{ role: "system", content: systemPrompt }, ...msgs],
     }, { headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` }, timeout: 45000 });
     return res.json({ success: true, data: { content: r.data.choices?.[0]?.message?.content || "", sources } });
@@ -307,7 +307,7 @@ app.get("/api/admin/health", requireAuth, async (req, res) => {
   try {
     if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY não configurado");
     await axios.post("https://api.groq.com/openai/v1/chat/completions", {
-      model: "llama-3.3-70b-versatile", max_tokens: 5, temperature: 0,
+      model: "openai/gpt-oss-120b", max_tokens: 5, temperature: 0,
       messages: [{ role: "user", content: "ping" }],
     }, { headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` }, timeout: 10000 });
     resultado.groq = { ok: true, tempoMs: Date.now() - inicioGroq, detalhe: "Respondeu normalmente" };
