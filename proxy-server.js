@@ -20,7 +20,6 @@ async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   // LOG TEMPORÁRIO DE DIAGNÓSTICO — remover depois de resolver o 401 misterioso.
   // Não loga o token inteiro por segurança, só se ele chegou e o tamanho.
-  console.log(`[DEBUG requireAuth] ${req.method} ${req.path} | header authorization: ${authHeader ? `presente, ${authHeader.length} chars, comeca com "${authHeader.slice(0, 15)}..."` : "AUSENTE"} | todos os headers recebidos: ${Object.keys(req.headers).join(", ")}`);
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ error: "Token de autenticação ausente." });
   try {
