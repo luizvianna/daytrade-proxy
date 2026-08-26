@@ -14,6 +14,11 @@ const SUPABASE_URL = process.env.SUPABASE_URL || "https://tbgoxrhoosxcrqqhtpbh.s
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
 const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Limiar padrão (%) dos alertas criados automaticamente ao favoritar um
+// ativo na watchlist. Fácil de ajustar aqui sem precisar caçar no meio do
+// código.
+const LIMIAR_ALERTA_WATCHLIST = 5;
+
 // Middleware: exige um token válido, garante que existe linha em `usuarios`,
 // e coloca o usuario_id real em req.usuarioId
 async function requireAuth(req, res, next) {
@@ -259,6 +264,32 @@ app.post("/api/watchlist", requireAuth, async (req, res) => {
       `INSERT INTO watchlist(usuario_id, ticker) VALUES($1,$2) ON CONFLICT (usuario_id, ticker) DO NOTHING`,
       [req.usuarioId, ticker]
     );
+    // Cria automaticamente 2 alertas de variação (sobe/cai) pro ativo
+    // favoritado, marcados como origem_watchlist=true pra poder limpar
+    // sozinho se o usuário desfavoritar depois. O WHERE NOT EXISTS evita
+    // duplicar caso essa rota seja chamada 2x pro mesmo ativo. Se der erro
+    // aqui, não derruba o favorito em si — só loga, porque favoritar não
+    // deveria falhar por causa de um alerta que é só um extra.
+    try {
+      await db.query(
+        `INSERT INTO alertas(usuario_id, ativo, tipo, direcao, valor, email_ativo, origem_watchlist)
+         SELECT $1,$2,'variacao_pct','sobe',$3,false,true
+         WHERE NOT EXISTS (
+           SELECT 1 FROM alertas WHERE usuario_id=$1 AND ativo=$2 AND tipo='variacao_pct' AND direcao='sobe' AND origem_watchlist=true
+         )`,
+        [req.usuarioId, ticker, LIMIAR_ALERTA_WATCHLIST]
+      );
+      await db.query(
+        `INSERT INTO alertas(usuario_id, ativo, tipo, direcao, valor, email_ativo, origem_watchlist)
+         SELECT $1,$2,'variacao_pct','cai',$3,false,true
+         WHERE NOT EXISTS (
+           SELECT 1 FROM alertas WHERE usuario_id=$1 AND ativo=$2 AND tipo='variacao_pct' AND direcao='cai' AND origem_watchlist=true
+         )`,
+        [req.usuarioId, ticker, LIMIAR_ALERTA_WATCHLIST]
+      );
+    } catch (alertErr) {
+      console.error("Erro ao criar alerta automático da watchlist:", alertErr.message);
+    }
     return res.json({ success: true });
   } catch (err) { return res.status(500).json({ error: "Erro ao adicionar à watchlist.", details: err.message }); }
 });
@@ -266,6 +297,10 @@ app.post("/api/watchlist", requireAuth, async (req, res) => {
 app.delete("/api/watchlist/:ticker", requireAuth, async (req, res) => {
   try {
     await db.query(`DELETE FROM watchlist WHERE usuario_id=$1 AND ticker=$2`, [req.usuarioId, req.params.ticker]);
+    // Remove também os alertas automáticos criados quando o ativo foi
+    // favoritado. Alertas que o usuário tenha criado manualmente pro mesmo
+    // ativo (origem_watchlist=false) não são tocados.
+    await db.query(`DELETE FROM alertas WHERE usuario_id=$1 AND ativo=$2 AND origem_watchlist=true`, [req.usuarioId, req.params.ticker]);
     return res.json({ success: true });
   } catch (err) { return res.status(500).json({ error: "Erro ao remover da watchlist.", details: err.message }); }
 });
@@ -379,7 +414,7 @@ app.post("/api/conta", requireAuth, async (req, res) => {
 app.get("/api/alertas", requireAuth, async (req, res) => {
   try {
     const r = await db.query(`SELECT * FROM alertas WHERE usuario_id=$1 ORDER BY criado_em DESC`, [req.usuarioId]);
-    return res.json({ success: true, data: r.rows.map(row => ({ id: row.id, ativo: row.ativo, tipo: row.tipo, direcao: row.direcao, valor: parseFloat(row.valor), emailAtivo: row.email_ativo, ativoFlag: row.ativo_flag, disparado: row.disparado, precoDisparo: row.preco_disparo?parseFloat(row.preco_disparo):null, criadoEm: row.criado_em, disparadoEm: row.disparado_em })) });
+    return res.json({ success: true, data: r.rows.map(row => ({ id: row.id, ativo: row.ativo, tipo: row.tipo, direcao: row.direcao, valor: parseFloat(row.valor), emailAtivo: row.email_ativo, ativoFlag: row.ativo_flag, disparado: row.disparado, precoDisparo: row.preco_disparo?parseFloat(row.preco_disparo):null, criadoEm: row.criado_em, disparadoEm: row.disparado_em, origemWatchlist: row.origem_watchlist })) });
   } catch (err) { return res.status(500).json({ error: "Erro ao buscar alertas.", details: err.message }); }
 });
 
