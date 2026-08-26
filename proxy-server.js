@@ -18,8 +18,6 @@ const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // e coloca o usuario_id real em req.usuarioId
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
-  // LOG TEMPORÁRIO DE DIAGNÓSTICO — remover depois de resolver o 401 misterioso.
-  // Não loga o token inteiro por segurança, só se ele chegou e o tamanho.
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ error: "Token de autenticação ausente." });
   try {
@@ -270,6 +268,60 @@ app.delete("/api/watchlist/:ticker", requireAuth, async (req, res) => {
     await db.query(`DELETE FROM watchlist WHERE usuario_id=$1 AND ticker=$2`, [req.usuarioId, req.params.ticker]);
     return res.json({ success: true });
   } catch (err) { return res.status(500).json({ error: "Erro ao remover da watchlist.", details: err.message }); }
+});
+
+// ── Painel de Saúde (admin) ───────────────────────────────────
+// Diferente do /health simples (usado pelo UptimeRobot a cada 5min, que só
+// confirma se as variáveis de ambiente existem), essa rota faz uma chamada
+// real em cada serviço externo. Só roda quando alguém abre o painel — não
+// entra em monitoramento automático, pra não gastar cota da Brapi/Groq à toa.
+app.get("/api/admin/health", requireAuth, async (req, res) => {
+  try {
+    const adminCheck = await db.query(`SELECT is_admin FROM usuarios WHERE id=$1`, [req.usuarioId]);
+    if (!adminCheck.rows[0]?.is_admin) return res.status(403).json({ error: "Acesso restrito a administradores." });
+  } catch (e) {
+    return res.status(500).json({ error: "Erro ao verificar permissão.", details: e.message });
+  }
+
+  const resultado = {};
+
+  const inicioDb = Date.now();
+  try {
+    const ok = await db.testarConexao();
+    resultado.database = { ok, tempoMs: Date.now() - inicioDb, detalhe: ok ? "Conectado" : "Falha na conexão" };
+  } catch (e) {
+    resultado.database = { ok: false, tempoMs: Date.now() - inicioDb, detalhe: e.message };
+  }
+
+  const inicioBrapi = Date.now();
+  try {
+    if (!BRAPI_TOKEN) throw new Error("BRAPI_TOKEN não configurado");
+    const r = await axios.get(`https://brapi.dev/api/quote/PETR4`, { params: { token: BRAPI_TOKEN }, timeout: 8000 });
+    const preco = r.data?.results?.[0]?.regularMarketPrice;
+    resultado.brapi = { ok: !!preco, tempoMs: Date.now() - inicioBrapi, detalhe: preco ? `PETR4 R$${preco}` : "Resposta sem preço" };
+  } catch (e) {
+    resultado.brapi = { ok: false, tempoMs: Date.now() - inicioBrapi, detalhe: e.response?.status ? `Erro ${e.response.status}` : e.message };
+  }
+
+  const inicioGroq = Date.now();
+  try {
+    if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY não configurado");
+    await axios.post("https://api.groq.com/openai/v1/chat/completions", {
+      model: "llama-3.3-70b-versatile", max_tokens: 5, temperature: 0,
+      messages: [{ role: "user", content: "ping" }],
+    }, { headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` }, timeout: 10000 });
+    resultado.groq = { ok: true, tempoMs: Date.now() - inicioGroq, detalhe: "Respondeu normalmente" };
+  } catch (e) {
+    resultado.groq = { ok: false, tempoMs: Date.now() - inicioGroq, detalhe: e.response?.status ? `Erro ${e.response.status}` : e.message };
+  }
+
+  resultado.supabaseAuth = {
+    ok: !!(SUPABASE_URL && SUPABASE_ANON_KEY),
+    tempoMs: 0,
+    detalhe: (SUPABASE_URL && SUPABASE_ANON_KEY) ? "Configurado (não testável sem token de usuário)" : "Variáveis ausentes",
+  };
+
+  return res.json({ success: true, checadoEm: new Date().toISOString(), servicos: resultado });
 });
 
 // ── Perfil ───────────────────────────────────────────────────
