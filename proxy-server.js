@@ -389,6 +389,68 @@ app.post("/api/onboarding/dispensar", requireAuth, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: "Erro ao dispensar checklist.", details: err.message }); }
 });
 
+// ── Atividade recente (consolidada) ───────────────────────────
+// Não é um log de auditoria de verdade — mostra o estado mais recente de
+// cada coisa (ordem, alerta, análise, favorito), não um histórico completo
+// de tudo que já aconteceu. Reaproveita tabelas que já existem, sem criar
+// nada novo.
+app.get("/api/atividade", requireAuth, async (req, res) => {
+  try {
+    const r = await db.query(
+      `(
+         SELECT 'ordem' AS categoria, ativo,
+                CASE
+                  WHEN status='cancelada' THEN 'Ordem de ' || tipo || ' cancelada'
+                  WHEN status='executada' THEN 'Ordem de ' || tipo || ' executada'
+                  ELSE 'Ordem de ' || tipo || ' enviada'
+                END AS descricao,
+                atualizado_em AS quando
+         FROM ordens WHERE usuario_id=$1
+       )
+       UNION ALL
+       (
+         SELECT 'alerta' AS categoria, ativo,
+                'Alerta disparado — ' ||
+                  CASE WHEN tipo='preco_exato' THEN 'atingiu o preço alvo'
+                       WHEN direcao='sobe' THEN 'subiu ' || valor || '%'
+                       ELSE 'caiu ' || valor || '%' END AS descricao,
+                disparado_em AS quando
+         FROM alertas WHERE usuario_id=$1 AND disparado=true AND disparado_em IS NOT NULL
+       )
+       UNION ALL
+       (
+         SELECT 'analise' AS categoria, ativo,
+                CASE WHEN origem='chat' THEN 'IA analisou no Chat — ' || COALESCE(recomendacao,'sem recomendação')
+                     ELSE 'Score calculado — ' || COALESCE(recomendacao,'sem recomendação') END AS descricao,
+                criado_em AS quando
+         FROM historico_recomendacoes WHERE usuario_id=$1
+       )
+       UNION ALL
+       (
+         SELECT 'favorito' AS categoria, ticker AS ativo,
+                'Adicionado aos favoritos' AS descricao,
+                criado_em AS quando
+         FROM watchlist WHERE usuario_id=$1
+       )
+       ORDER BY quando DESC
+       LIMIT 20`,
+      [req.usuarioId]
+    );
+
+    const eventos = r.rows;
+
+    // Relatório semanal só guarda 1 data (a mais recente), não uma lista —
+    // mescla como mais um item da linha do tempo se já tiver sido enviado.
+    const rel = await db.query(`SELECT ultimo_envio FROM relatorio_config WHERE usuario_id=$1`, [req.usuarioId]);
+    if (rel.rows[0]?.ultimo_envio) {
+      eventos.push({ categoria: "relatorio", ativo: null, descricao: "Relatório semanal enviado por e-mail", quando: rel.rows[0].ultimo_envio });
+    }
+    eventos.sort((a, b) => new Date(b.quando) - new Date(a.quando));
+
+    return res.json({ success: true, data: eventos.slice(0, 20) });
+  } catch (err) { return res.status(500).json({ error: "Erro ao buscar atividade.", details: err.message }); }
+});
+
 // ── Perfil ───────────────────────────────────────────────────
 app.get("/api/perfil", requireAuth, async (req, res) => {
   try {
