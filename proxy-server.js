@@ -359,6 +359,33 @@ app.get("/api/admin/health", requireAuth, async (req, res) => {
   return res.json({ success: true, checadoEm: new Date().toISOString(), servicos: resultado });
 });
 
+// ── Onboarding (checklist de primeiros passos) ────────────────
+app.get("/api/onboarding", requireAuth, async (req, res) => {
+  try {
+    const [perfil, watch, chat, score, usuario] = await Promise.all([
+      db.query(`SELECT 1 FROM perfis_investidor WHERE usuario_id=$1 LIMIT 1`, [req.usuarioId]),
+      db.query(`SELECT 1 FROM watchlist WHERE usuario_id=$1 LIMIT 1`, [req.usuarioId]),
+      db.query(`SELECT 1 FROM historico_recomendacoes WHERE usuario_id=$1 AND origem='chat' LIMIT 1`, [req.usuarioId]),
+      db.query(`SELECT 1 FROM historico_recomendacoes WHERE usuario_id=$1 AND origem='score' LIMIT 1`, [req.usuarioId]),
+      db.query(`SELECT onboarding_dispensado FROM usuarios WHERE id=$1`, [req.usuarioId]),
+    ]);
+    const passos = {
+      perfil: perfil.rows.length > 0,
+      favorito: watch.rows.length > 0,
+      chat: chat.rows.length > 0,
+      score: score.rows.length > 0,
+    };
+    return res.json({ success: true, data: { passos, dispensado: !!usuario.rows[0]?.onboarding_dispensado } });
+  } catch (err) { return res.status(500).json({ error: "Erro ao buscar progresso.", details: err.message }); }
+});
+
+app.post("/api/onboarding/dispensar", requireAuth, async (req, res) => {
+  try {
+    await db.query(`UPDATE usuarios SET onboarding_dispensado=true WHERE id=$1`, [req.usuarioId]);
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ error: "Erro ao dispensar checklist.", details: err.message }); }
+});
+
 // ── Perfil ───────────────────────────────────────────────────
 app.get("/api/perfil", requireAuth, async (req, res) => {
   try {
