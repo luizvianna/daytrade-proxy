@@ -90,7 +90,10 @@ app.post("/api/ai/analyze", async (req, res) => {
     try { return res.json({ success: true, data: JSON.parse(text.replace(/```json|```/g,"").trim()) }); }
     catch { return res.json({ success: true, data: { raw: text } }); }
   } catch (err) {
-    if (err.response?.status === 429) return res.status(429).json({ error: "Limite do Groq atingido." });
+    if (err.response?.status === 429) {
+      const retryAfter = err.response.headers?.["retry-after"];
+      return res.status(429).json({ error: "Limite do Groq atingido.", retryAfterSeconds: retryAfter ? parseFloat(retryAfter) : 10 });
+    }
     return res.status(500).json({ error: "Erro IA.", details: err.message });
   }
 });
