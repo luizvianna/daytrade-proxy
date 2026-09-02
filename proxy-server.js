@@ -418,12 +418,20 @@ app.get("/api/atividade", requireAuth, async (req, res) => {
          FROM alertas WHERE usuario_id=$1 AND disparado=true AND disparado_em IS NOT NULL
        )
        UNION ALL
-       (
+              (
          SELECT 'analise' AS categoria, ativo,
-                CASE WHEN origem='chat' THEN 'IA analisou no Chat — ' || COALESCE(recomendacao,'sem recomendação')
-                     ELSE 'Score calculado — ' || COALESCE(recomendacao,'sem recomendação') END AS descricao,
+                'IA analisou no Chat — ' || COALESCE(recomendacao,'sem recomendação') AS descricao,
                 criado_em AS quando
-         FROM historico_recomendacoes WHERE usuario_id=$1
+         FROM historico_recomendacoes WHERE usuario_id=$1 AND origem='chat'
+       )
+       UNION ALL
+       (
+         SELECT 'analise' AS categoria, NULL::text AS ativo,
+                'Score calculado para ' || COUNT(*) || ' ativo' || CASE WHEN COUNT(*) > 1 THEN 's' ELSE '' END AS descricao,
+                MAX(criado_em) AS quando
+         FROM historico_recomendacoes
+         WHERE usuario_id=$1 AND origem='score'
+         GROUP BY date_trunc('hour', criado_em), (EXTRACT(minute FROM criado_em)::int / 10)
        )
        UNION ALL
        (
