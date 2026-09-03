@@ -459,17 +459,22 @@ app.get("/api/atividade", requireAuth, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: "Erro ao buscar atividade.", details: err.message }); }
 });
 
-// ── Tutorial (onboarding explicativo) ─────────────────────────
+// ── Tutorial (spotlight por tela, guardado por seção) ─────────
 app.get("/api/tutorial", requireAuth, async (req, res) => {
   try {
     const r = await db.query(`SELECT tutorial_visto FROM usuarios WHERE id=$1`, [req.usuarioId]);
-    return res.json({ success: true, data: { visto: !!r.rows[0]?.tutorial_visto } });
+    return res.json({ success: true, data: r.rows[0]?.tutorial_visto || {} });
   } catch (err) { return res.status(500).json({ error: "Erro ao buscar tutorial.", details: err.message }); }
 });
 
 app.post("/api/tutorial/visto", requireAuth, async (req, res) => {
+  const { secao } = req.body;
+  if (!secao) return res.status(400).json({ error: "Campo obrigatório: secao." });
   try {
-    await db.query(`UPDATE usuarios SET tutorial_visto=true WHERE id=$1`, [req.usuarioId]);
+    await db.query(
+      `UPDATE usuarios SET tutorial_visto = tutorial_visto || jsonb_build_object($2::text, true) WHERE id=$1`,
+      [req.usuarioId, secao]
+    );
     return res.json({ success: true });
   } catch (err) { return res.status(500).json({ error: "Erro ao marcar tutorial.", details: err.message }); }
 });
