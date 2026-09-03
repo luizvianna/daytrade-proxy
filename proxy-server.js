@@ -459,6 +459,21 @@ app.get("/api/atividade", requireAuth, async (req, res) => {
   } catch (err) { return res.status(500).json({ error: "Erro ao buscar atividade.", details: err.message }); }
 });
 
+// ── Tutorial (onboarding explicativo) ─────────────────────────
+app.get("/api/tutorial", requireAuth, async (req, res) => {
+  try {
+    const r = await db.query(`SELECT tutorial_visto FROM usuarios WHERE id=$1`, [req.usuarioId]);
+    return res.json({ success: true, data: { visto: !!r.rows[0]?.tutorial_visto } });
+  } catch (err) { return res.status(500).json({ error: "Erro ao buscar tutorial.", details: err.message }); }
+});
+
+app.post("/api/tutorial/visto", requireAuth, async (req, res) => {
+  try {
+    await db.query(`UPDATE usuarios SET tutorial_visto=true WHERE id=$1`, [req.usuarioId]);
+    return res.json({ success: true });
+  } catch (err) { return res.status(500).json({ error: "Erro ao marcar tutorial.", details: err.message }); }
+});
+
 // ── Perfil ───────────────────────────────────────────────────
 app.get("/api/perfil", requireAuth, async (req, res) => {
   try {
